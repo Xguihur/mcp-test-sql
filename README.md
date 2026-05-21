@@ -80,12 +80,25 @@ npm start
 
 ## Claude Code 配置
 
-在 `~/.claude/settings.json` 中加入：
+推荐直接用用户级命令注册：
+
+```bash
+claude mcp add -s user db-readonly \
+  --env DB_HOST=localhost \
+  --env DB_PORT=3306 \
+  --env DB_USER=root \
+  --env DB_PASSWORD=your_password \
+  --env DB_NAME=your_default_database \
+  -- node /Users/xiaolongxia/Desktop/AI/db-readonly-mcp/index.js
+```
+
+Claude Code 会把它写入 `~/.claude.json`。等价配置如下：
 
 ```json
 {
   "mcpServers": {
     "db-readonly": {
+      "type": "stdio",
       "command": "node",
       "args": ["/*/db-readonly-mcp/index.js"],
       "env": {
@@ -100,7 +113,7 @@ npm start
 }
 ```
 
-保存后重启 Claude Code session，让客户端重新加载这个 MCP Server。
+不要再把 `mcpServers` 写到 `~/.claude/settings.json`。配置完成后重启 Claude Code session，让客户端重新加载这个 MCP Server。
 
 ## 测试触发
 
