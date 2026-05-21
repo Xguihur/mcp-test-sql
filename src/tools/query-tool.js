@@ -1,7 +1,7 @@
-import mysql from "mysql2/promise";
 import { z } from "zod";
 
 import { formatResult } from "../utils/result-format.js";
+import { executeQuery } from "../utils/mysql-client.js";
 import { hasMultipleStatements, isReadonlySql, normalizeSql } from "../utils/sql-guards.js";
 
 export function registerQueryTool(server, { dbConfig, maxRows }) {
@@ -55,16 +55,12 @@ export function registerQueryTool(server, { dbConfig, maxRows }) {
         };
       }
 
-      const connectionConfig = {
-        ...dbConfig,
-        ...(database ? { database } : {}),
-      };
-
-      let connection;
-
       try {
-        connection = await mysql.createConnection(connectionConfig);
-        const [rows] = await connection.query(cleanedSql);
+        const rows = await executeQuery({
+          dbConfig,
+          sql: cleanedSql,
+          database,
+        });
 
         return {
           content: [{ type: "text", text: formatResult(rows, maxRows) }],
@@ -79,10 +75,6 @@ export function registerQueryTool(server, { dbConfig, maxRows }) {
             },
           ],
         };
-      } finally {
-        if (connection) {
-          await connection.end();
-        }
       }
     }
   );

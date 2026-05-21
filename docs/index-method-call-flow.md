@@ -4,10 +4,11 @@
 
 ## 总览
 
-这个文件的调用可以分成两段：
+这个文件的调用可以分成三段：
 
 1. 启动阶段：读取环境变量，创建 server，统一注册 tool，建立 `stdio` 通信。
-2. 查询阶段：当客户端调用 `query` 时，先做 SQL 清洗和安全校验，再连 MySQL 执行查询，最后格式化结果并返回。
+2. 通用查询阶段：当客户端调用 `query` 时，先做 SQL 清洗和安全校验，再连 MySQL 执行查询，最后格式化结果并返回。
+3. 表结构查看阶段：当客户端调用 `describe_table` 时，先解析目标数据库，再查询 `INFORMATION_SCHEMA.COLUMNS` 返回表结构。
 
 ## 启动阶段
 
@@ -19,14 +20,16 @@ flowchart TD
     D --> E["createRuntimeConfig()"]
     E --> F["构造 dbConfig 与 maxRows"]
     F --> G["registerTools(server, context)"]
-    G --> H["registerQueryTool(server, context)"]
-    H --> I["server.registerTool('query', config, handler)"]
-    I --> J["new StdioServerTransport()"]
-    J --> K["server.connect(transport)"]
-    K --> L["进程进入等待状态<br/>等待 MCP 客户端调用 query"]
+    G --> H["registerDescribeTableTool(server, context)"]
+    H --> I["server.registerTool('describe_table', config, handler)"]
+    I --> J["registerQueryTool(server, context)"]
+    J --> K["server.registerTool('query', config, handler)"]
+    K --> L["new StdioServerTransport()"]
+    L --> M["server.connect(transport)"]
+    M --> N["进程进入等待状态<br/>等待 MCP 客户端调用 tool"]
 ```
 
-## 查询阶段
+## `query` 执行阶段
 
 ```mermaid
 flowchart TD
@@ -54,24 +57,50 @@ flowchart TD
     Q --> R
 ```
 
+## `describe_table` 执行阶段
+
+```mermaid
+flowchart TD
+    A["客户端调用 describe_table(table, database)"] --> B["handler 开始执行"]
+    B --> C["resolveDatabaseName(dbConfig, database)"]
+    C --> D{"是否拿到了目标数据库?"}
+    D -- "否" --> D1["返回错误<br/>database is required"]
+    D -- "是" --> E["executeQuery(...)"]
+    E --> F["查询 INFORMATION_SCHEMA.COLUMNS"]
+    F --> G{"是否查到字段?"}
+    G -- "否" --> G1["返回错误<br/>Table not found"]
+    G -- "是" --> H["formatResult(rows, maxRows)"]
+    H --> I["返回成功结果"]
+    E -. "异常" .-> J["catch(error)<br/>返回 Describe table failed"]
+```
+
 ## 工具函数关系
 
 ```mermaid
 flowchart LR
     A["createRuntimeConfig()"] --> A1["把环境变量组装成运行时配置"]
-    B["stripLeadingComments(sql)"] --> B1["移除 SQL 开头的 -- / # / /* */ 注释"]
-    C["normalizeSql(sql)"] --> B
-    C --> C1["去尾部分号并 trim"]
-    D["hasMultipleStatements(sql)"] --> C
-    E["isReadonlySql(sql)"] --> C
-    F["formatResult(rows, maxRows)"] --> F1["结果太长时截断"]
-    G["registerQueryTool(server, context)"] --> G1["统一定义 query 的 schema、annotations、handler"]
+    B["executeQuery(...)"] --> B1["统一处理 MySQL 连接、执行、关闭连接"]
+    C["resolveDatabaseName(...)"] --> C1["解析默认库与临时覆盖库"]
+    D["stripLeadingComments(sql)"] --> D1["移除 SQL 开头的 -- / # / /* */ 注释"]
+    E["normalizeSql(sql)"] --> D
+    E --> E1["去尾部分号并 trim"]
+    F["hasMultipleStatements(sql)"] --> E
+    G["isReadonlySql(sql)"] --> E
+    H["formatResult(rows, maxRows)"] --> H1["结果太长时截断"]
+    I["registerDescribeTableTool(server, context)"] --> I1["统一定义 describe_table 的 schema、annotations、handler"]
+    J["registerQueryTool(server, context)"] --> J1["统一定义 query 的 schema、annotations、handler"]
 ```
 
 ## 逐个方法看职责
 
 - `createRuntimeConfig()`
   读取 `.env`，构造工具执行时会用到的 `dbConfig` 和 `maxRows`。这样后面新增其他 tool 时，也能共享同一套运行时配置。
+
+- `executeQuery(...)`
+  统一处理数据库连接、执行 SQL、返回结果、关闭连接。现在 `query` 和 `describe_table` 都复用了这层逻辑。
+
+- `resolveDatabaseName(...)`
+  解析本次请求应该使用哪个数据库：优先取 tool 参数里的 `database`，否则退回 `DB_NAME`。
 
 - `stripLeadingComments(sql)`
   把 SQL 最前面的注释剥掉，避免 `-- comment` 或 `/* ... */` 影响后面的安全判断。
@@ -91,6 +120,9 @@ flowchart LR
 - `registerQueryTool(server, context)`
   这是 `query` tool 的注册函数。它内部使用 `server.registerTool(...)` 声明 tool 名称、描述、参数 schema、annotations 和 handler。
 
+- `registerDescribeTableTool(server, context)`
+  这是 `describe_table` tool 的注册函数。它通过查询 `INFORMATION_SCHEMA.COLUMNS` 返回表结构信息，是一个更语义化的数据库教学示例。
+
 - `registerTools(server, context)`
   这是统一注册入口。以后新增 tool 时，通常只需要在这里多注册一个函数，而不需要让 `index.js` 持续变大。
 
@@ -106,10 +138,10 @@ flowchart LR
 `registerTools()` 统一挂载能力  
 `server.registerTool()` 暴露能力  
 `handler` 接请求  
-`normalizeSql / hasMultipleStatements / isReadonlySql` 做安全校验  
-`mysql.createConnection + query` 执行数据库操作  
+`normalizeSql / hasMultipleStatements / isReadonlySql` 负责通用 SQL 安全校验  
+`resolveDatabaseName / executeQuery` 负责数据库访问公共逻辑  
 `formatResult` 整理结果  
-`finally` 负责收尾关闭连接
+`executeQuery()` 内部负责收尾关闭连接
 
 ## 为什么我把图放在 `docs/`
 

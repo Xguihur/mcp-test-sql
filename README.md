@@ -6,7 +6,7 @@
 
 ## 功能
 
-- 暴露一个 `query` tool
+- 暴露两个只读 tool：`query` 和 `describe_table`
 - 只允许执行只读 SQL：`SELECT`、`SHOW`、`DESCRIBE`、`EXPLAIN`、`WITH`
 - 禁止多语句执行
 - 支持用 `database` 参数临时覆盖默认库
@@ -18,7 +18,9 @@
 - `index.js`：启动入口，只负责加载环境变量、创建 server、连接 transport
 - `src/create-server.js`：创建 `McpServer` 并装配运行时配置
 - `src/tools/register-tools.js`：统一注册所有 tool
+- `src/tools/describe-table-tool.js`：`describe_table` tool 的定义与业务逻辑
 - `src/tools/query-tool.js`：`query` tool 的定义与业务逻辑
+- `src/utils/mysql-client.js`：数据库连接、查询执行与默认库解析
 - `src/utils/sql-guards.js`：SQL 清洗与只读安全校验
 - `src/utils/result-format.js`：结果格式化
 - `.env.example`：数据库配置占位文件
@@ -35,9 +37,11 @@ db-readonly-mcp/
 │   ├── config/
 │   │   └── runtime.js
 │   ├── tools/
+│   │   ├── describe-table-tool.js
 │   │   ├── query-tool.js
 │   │   └── register-tools.js
 │   └── utils/
+│       ├── mysql-client.js
 │       ├── result-format.js
 │       └── sql-guards.js
 └── docs/
@@ -51,13 +55,13 @@ db-readonly-mcp/
 npm install
 ```
 
-2. 复制环境变量模板
+1. 复制环境变量模板
 
 ```bash
 cp .env.example .env
 ```
 
-3. 按需填写数据库配置
+1. 按需填写数据库配置
 
 ```env
 DB_HOST=localhost
@@ -68,15 +72,52 @@ DB_NAME=your_default_database
 MAX_ROWS=200
 ```
 
-4. 启动服务
+1. 启动服务
 
 ```bash
 npm start
 ```
 
+## Claude Code 配置
+
+在 `~/.claude/settings.json` 中加入：
+
+```json
+{
+  "mcpServers": {
+    "db-readonly": {
+      "command": "node",
+      "args": ["/*/db-readonly-mcp/index.js"],
+      "env": {
+        "DB_HOST": "localhost",
+        "DB_PORT": "3306",
+        "DB_USER": "root",
+        "DB_PASSWORD": "your_password",
+        "DB_NAME": "your_default_database"
+      }
+    }
+  }
+}
+```
+
+保存后重启 Claude Code session，让客户端重新加载这个 MCP Server。
+
+## 测试触发
+
+推荐先测两种方式：
+
+- 强触发：明确要求 agent 调用 MCP
+  - `请调用 MCP 工具 describe_table 查看 users 表结构，并整理字段信息给我。`
+  - `请调用 MCP 工具 query 执行 SELECT COUNT(*) AS total FROM users，并告诉我结果。`
+- 自然触发：只提业务问题，让 agent 自己决定是否调用
+  - `users 表有哪些字段？`
+  - `users 表现在有多少条数据？`
+
+如果配置成功，Claude Code 里应该能看到类似 `mcp__db-readonly__describe_table` 或 `mcp__db-readonly__query` 的工具调用记录。
+
 ## Tool 设计
 
-当前仅实现一个 tool：
+当前实现两个 tool：
 
 - `query`
   - 入参：
@@ -84,12 +125,18 @@ npm start
     - `database`：可选，临时覆盖默认数据库
   - 返回：
     - 文本格式 JSON 查询结果
+- `describe_table`
+  - 入参：
+    - `table`：要查看结构的表名
+    - `database`：可选，临时覆盖默认数据库
+  - 返回：
+    - 表字段结构的文本格式 JSON 结果
 
 ## 后续如何新增 tool
 
 推荐流程：
 
-1. 在 `src/tools/` 下新增一个独立文件，比如 `describe-table-tool.js`
+1. 在 `src/tools/` 下新增一个独立文件，比如 `list-tables-tool.js`
 2. 在这个文件里用 `server.registerTool(...)` 定义新 tool
 3. 在 `src/tools/register-tools.js` 里统一注册它
 4. 如果多个 tool 共用逻辑，再把公共逻辑放进 `src/utils/` 或 `src/config/`
@@ -104,4 +151,5 @@ npm start
 
 - 这个项目本身不需要模型 token。
 - 后续如果你要接入 Claude Code、Codex 或其他 MCP Client，再在客户端侧配置启动命令和环境变量即可。
-- 当前实现是文章案例的工程化版本，保留了最小结构，同时补了多语句拦截、结果截断，以及面向多 tool 的组织方式，便于直接继续扩展。
+- 当前实现是文章案例的工程化版本，保留了最小结构，同时补了多语句拦截、结果截断、表结构查看能力，以及面向多 tool 的组织方式，便于直接继续扩展。
+

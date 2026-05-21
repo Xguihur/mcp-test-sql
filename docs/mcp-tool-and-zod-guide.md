@@ -15,17 +15,18 @@ zod_version: 3.25.76
 
 # MCP Tool 方法与 Zod 校验说明
 
-这份笔记专门解释当前项目里 [query-tool.js](/Users/xiaolongxia/Desktop/AI/db-readonly-mcp/src/tools/query-tool.js) 的 `server.registerTool(...)` 是怎么用的，它有哪些参数，以及 `z` 也就是 `zod` 这个校验库在这里扮演什么角色。
+这份笔记专门解释当前项目里 [query-tool.js](/Users/xiaolongxia/Desktop/AI/db-readonly-mcp/src/tools/query-tool.js) 和 [describe-table-tool.js](/Users/xiaolongxia/Desktop/AI/db-readonly-mcp/src/tools/describe-table-tool.js) 使用的 `server.registerTool(...)` 是怎么用的，它有哪些参数，以及 `z` 也就是 `zod` 这个校验库在这里扮演什么角色。
 
-配合 [[index-method-call-flow]] 一起看会更完整。
+配合 [[index-method-call-flow]] 和 [[describe-table-tool-guide]] 一起看会更完整。
 
 > [!info] 这份说明基于当前项目实际安装版本
 > - `@modelcontextprotocol/sdk`: `1.29.0`
 > - `zod`: `3.25.76`
 > - 当前项目示例已经使用 `server.registerTool(...)`
 > - `tool(...)` 在这个 SDK 版本里已经是 `deprecated`
+> - 当前项目里已经有两个实际示例：`query` 和 `describe_table`
 
-## 先看你项目里的这段代码
+## 先看你项目里的两种实际写法
 
 ```js
 server.registerTool(
@@ -63,6 +64,27 @@ server.registerTool(
 | 第 2 个参数 | 一个 config 对象 | 放 `title`、`description`、`inputSchema`、`annotations` 等配置。 |
 | 第 3 个参数 | `async ({ sql, database }) => {}` | handler。当前 tool 被调用时，真正执行的业务逻辑。 |
 
+另一个更语义化的例子是 `describe_table`：
+
+```js
+server.registerTool(
+  "describe_table",
+  {
+    title: "Describe MySQL Table",
+    description: "Show the schema of a MySQL table.",
+    inputSchema: {
+      table: z.string().min(1).describe("Table name to inspect."),
+      database: z.string().min(1).optional().describe("Optional database override"),
+    },
+  },
+  async ({ table, database }) => {
+    // 业务逻辑
+  }
+);
+```
+
+这个例子特别适合学 `registerTool(...)`，因为它比 `query` 更容易看出“tool 名称、参数、业务意图”之间是一一对应的。
+
 ## `server.registerTool(...)` 到底有哪些参数
 
 > [!note]
@@ -89,6 +111,14 @@ registerTool(name, config, handler)
 ```
 
 含义就是“执行数据库查询”。
+
+另一个真实例子是：
+
+```js
+"describe_table"
+```
+
+含义就是“查看某张表的结构”。
 
 ### 2. `config`
 
@@ -135,6 +165,12 @@ registerTool(name, config, handler)
 - 告诉模型这是 MySQL 查询工具。
 - 明确告诉模型它只能做只读查询。
 
+而 `describe_table` 的 `description` 则更偏向“明确能力边界”：
+
+- 它不是通用 SQL 工具。
+- 它只做一件事：查看表结构。
+- 这种更语义化的 tool，通常更适合作为教程里的第二个示例。
+
 ### 2.3 `inputSchema`
 
 类型：
@@ -170,6 +206,13 @@ registerTool(name, config, handler)
 
 - `sql` 是必填字符串，而且不能为空字符串。
 - `database` 是可选字符串；如果传了，也不能为空。
+
+`describe_table` 的 `inputSchema` 也是同一个模式，只是字段换成了：
+
+- `table`
+- `database`
+
+这正好说明：MCP tool 的变化点往往主要就在 `inputSchema` 和 handler 逻辑。
 
 ### 2.4 `annotations`
 
@@ -450,7 +493,7 @@ z.object({
 
 你这里最关键的不是“类型体操”，而是这三件事：
 
-1. 明确告诉客户端：这个 tool 只接受 `sql` 和 `database`。
+1. 明确告诉客户端：这个 tool 只接受 `sql` 和 `database`，或者像 `describe_table` 那样只接受 `table` 和 `database`。
 2. 明确告诉 SDK：哪些字段必填，哪些可选。
 3. 在业务逻辑执行前，先挡掉明显不合法的输入。
 
@@ -519,9 +562,9 @@ server.registerTool(
 
 ## 放回你这个项目里，应该怎么理解
 
-把 [query-tool.js](/Users/xiaolongxia/Desktop/AI/db-readonly-mcp/src/tools/query-tool.js) 里的这段代码翻译成一句人话就是：
+把 [query-tool.js](/Users/xiaolongxia/Desktop/AI/db-readonly-mcp/src/tools/query-tool.js) 或 [describe-table-tool.js](/Users/xiaolongxia/Desktop/AI/db-readonly-mcp/src/tools/describe-table-tool.js) 里的代码翻译成一句人话就是：
 
-> 向 MCP 客户端注册一个叫 `query` 的工具。  
+> 向 MCP 客户端注册一个叫 `query` 或 `describe_table` 的工具。  
 > 它的 config 里定义了标题、描述、参数 schema 和只读行为提示。  
 > SDK 先用 `zod` 校验参数，再把校验后的值交给 handler。  
 > handler 再继续做 SQL 清洗、只读判断、数据库执行和结果返回。
@@ -536,7 +579,7 @@ server.registerTool(
 > 3. 在 handler 里做业务逻辑  
 > 4. 能用 schema 挡掉的基础问题，尽量不要留到业务逻辑里再处理
 
-比如：
+比如你现在项目里已经有一个更适合作为教学示例的版本：
 
 ```js
 server.registerTool(
@@ -566,7 +609,9 @@ server.registerTool(
 - `zod` 在这里最重要的用途是：定义参数、校验参数、生成可暴露的输入说明
 - 你的项目现在已经切到了当前 SDK 更推荐的 `registerTool(...)`
 - `zod` 负责“参数是否合法”，你的 SQL 相关函数负责“业务是否安全”
+- 当你想写更适合教程和复用的 tool 时，像 `describe_table` 这种“单一意图、少量参数、明确返回”的设计会很舒服
 
 ## 相关笔记
 
 - [[index-method-call-flow]]
+- [[describe-table-tool-guide]]
