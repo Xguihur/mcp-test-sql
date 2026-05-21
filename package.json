@@ -7,7 +7,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js"
+    "check": "node --check index.js && find src -name '*.js' -exec node --check {} \\;"
   },
   "engines": {
     "node": ">=18"

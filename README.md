@@ -2,6 +2,8 @@
 
 一个最小可运行的只读 MySQL MCP Server 示例，按你给的掘金文章案例落地，但暂时不包含任何客户端接入配置。
 
+当前版本已经整理成“单一入口 + 多 tool 可扩展”的结构，并使用 SDK 推荐的 `registerTool(...)` 方式注册 tool。
+
 ## 功能
 
 - 暴露一个 `query` tool
@@ -9,12 +11,37 @@
 - 禁止多语句执行
 - 支持用 `database` 参数临时覆盖默认库
 - 查询结果超过 `MAX_ROWS` 时自动截断
+- 为后续新增更多 tool 预留了统一注册入口
 
 ## 文件说明
 
-- `index.js`：MCP Server 主程序
+- `index.js`：启动入口，只负责加载环境变量、创建 server、连接 transport
+- `src/create-server.js`：创建 `McpServer` 并装配运行时配置
+- `src/tools/register-tools.js`：统一注册所有 tool
+- `src/tools/query-tool.js`：`query` tool 的定义与业务逻辑
+- `src/utils/sql-guards.js`：SQL 清洗与只读安全校验
+- `src/utils/result-format.js`：结果格式化
 - `.env.example`：数据库配置占位文件
 - `package.json`：依赖与脚本
+- `docs/`：实现说明与 MCP / Zod 学习笔记
+
+## 当前结构
+
+```text
+db-readonly-mcp/
+├── index.js
+├── src/
+│   ├── create-server.js
+│   ├── config/
+│   │   └── runtime.js
+│   ├── tools/
+│   │   ├── query-tool.js
+│   │   └── register-tools.js
+│   └── utils/
+│       ├── result-format.js
+│       └── sql-guards.js
+└── docs/
+```
 
 ## 使用方式
 
@@ -58,8 +85,23 @@ npm start
   - 返回：
     - 文本格式 JSON 查询结果
 
+## 后续如何新增 tool
+
+推荐流程：
+
+1. 在 `src/tools/` 下新增一个独立文件，比如 `describe-table-tool.js`
+2. 在这个文件里用 `server.registerTool(...)` 定义新 tool
+3. 在 `src/tools/register-tools.js` 里统一注册它
+4. 如果多个 tool 共用逻辑，再把公共逻辑放进 `src/utils/` 或 `src/config/`
+
+这样做的好处是：
+
+- `index.js` 不会越长越乱
+- 每个 tool 的边界更清楚
+- 后面要拆测试、拆权限、拆文档都更方便
+
 ## 说明
 
 - 这个项目本身不需要模型 token。
 - 后续如果你要接入 Claude Code、Codex 或其他 MCP Client，再在客户端侧配置启动命令和环境变量即可。
-- 当前实现是文章案例的工程化版本，保留了最小结构，同时补了多语句拦截和结果截断，便于直接继续扩展。
+- 当前实现是文章案例的工程化版本，保留了最小结构，同时补了多语句拦截、结果截断，以及面向多 tool 的组织方式，便于直接继续扩展。

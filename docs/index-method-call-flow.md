@@ -1,27 +1,29 @@
-# `index.js` 方法调用流程图
+# `index.js` 与 Tool 注册调用流程图
 
-这份文档专门解释 [index.js](/Users/xiaolongxia/Desktop/AI/db-readonly-mcp/index.js) 里的主要方法是怎么串起来工作的。
+这份文档专门解释 [index.js](/Users/xiaolongxia/Desktop/AI/db-readonly-mcp/index.js) 和 `src/` 下面几个关键模块是怎么串起来工作的。
 
 ## 总览
 
 这个文件的调用可以分成两段：
 
-1. 启动阶段：读取环境变量，初始化配置，注册 `query` tool，建立 `stdio` 通信。
+1. 启动阶段：读取环境变量，创建 server，统一注册 tool，建立 `stdio` 通信。
 2. 查询阶段：当客户端调用 `query` 时，先做 SQL 清洗和安全校验，再连 MySQL 执行查询，最后格式化结果并返回。
 
 ## 启动阶段
 
 ```mermaid
 flowchart TD
-    A["加载模块<br/>dotenv / MCP SDK / mysql2 / zod"] --> B["parseInteger()<br/>解析 DB_PORT"]
-    B --> C["构造 dbConfig"]
-    C --> D["parseInteger()<br/>解析 MAX_ROWS"]
-    D --> E["创建 McpServer 实例"]
-    E --> F["server.tool('query', ...)<br/>注册 query 工具和 handler"]
-    F --> G["main()"]
-    G --> H["new StdioServerTransport()"]
-    H --> I["server.connect(transport)"]
-    I --> J["进程进入等待状态<br/>等待 MCP 客户端调用 query"]
+    A["index.js<br/>加载 dotenv 与 transport"] --> B["main()"]
+    B --> C["createServer()"]
+    C --> D["new McpServer(...)"]
+    D --> E["createRuntimeConfig()"]
+    E --> F["构造 dbConfig 与 maxRows"]
+    F --> G["registerTools(server, context)"]
+    G --> H["registerQueryTool(server, context)"]
+    H --> I["server.registerTool('query', config, handler)"]
+    I --> J["new StdioServerTransport()"]
+    J --> K["server.connect(transport)"]
+    K --> L["进程进入等待状态<br/>等待 MCP 客户端调用 query"]
 ```
 
 ## 查询阶段
@@ -56,19 +58,20 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    A["parseInteger(value, fallback)"] --> A1["把环境变量转成整数"]
+    A["createRuntimeConfig()"] --> A1["把环境变量组装成运行时配置"]
     B["stripLeadingComments(sql)"] --> B1["移除 SQL 开头的 -- / # / /* */ 注释"]
     C["normalizeSql(sql)"] --> B
     C --> C1["去尾部分号并 trim"]
     D["hasMultipleStatements(sql)"] --> C
     E["isReadonlySql(sql)"] --> C
     F["formatResult(rows, maxRows)"] --> F1["结果太长时截断"]
+    G["registerQueryTool(server, context)"] --> G1["统一定义 query 的 schema、annotations、handler"]
 ```
 
 ## 逐个方法看职责
 
-- `parseInteger(value, fallback)`
-  把 `.env` 里的字符串端口、行数限制转成整数；解析失败时回退到默认值。
+- `createRuntimeConfig()`
+  读取 `.env`，构造工具执行时会用到的 `dbConfig` 和 `maxRows`。这样后面新增其他 tool 时，也能共享同一套运行时配置。
 
 - `stripLeadingComments(sql)`
   把 SQL 最前面的注释剥掉，避免 `-- comment` 或 `/* ... */` 影响后面的安全判断。
@@ -85,8 +88,11 @@ flowchart LR
 - `formatResult(rows, maxRows)`
   把查询结果转成 JSON 文本；如果结果行数太多，只返回前 `maxRows` 行并追加截断提示。
 
-- `server.tool("query", ..., handler)`
-  这是整个业务入口。客户端真正调用的是这里注册的 `query` tool，后面的 SQL 清洗、校验、数据库连接、结果返回都在这个 handler 里发生。
+- `registerQueryTool(server, context)`
+  这是 `query` tool 的注册函数。它内部使用 `server.registerTool(...)` 声明 tool 名称、描述、参数 schema、annotations 和 handler。
+
+- `registerTools(server, context)`
+  这是统一注册入口。以后新增 tool 时，通常只需要在这里多注册一个函数，而不需要让 `index.js` 持续变大。
 
 - `main()`
   只负责创建 `StdioServerTransport` 并把 server 接上去，让这个进程可以通过 `stdin/stdout` 跟 MCP 客户端通信。
@@ -96,7 +102,9 @@ flowchart LR
 最值得记的一条主线其实很简单：
 
 `main()` 启动服务  
-`server.tool()` 暴露能力  
+`createServer()` 创建并装配 server  
+`registerTools()` 统一挂载能力  
+`server.registerTool()` 暴露能力  
 `handler` 接请求  
 `normalizeSql / hasMultipleStatements / isReadonlySql` 做安全校验  
 `mysql.createConnection + query` 执行数据库操作  
