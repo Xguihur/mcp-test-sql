@@ -1,0 +1,21 @@
+{
+  "name": "db-readonly-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A minimal read-only MySQL MCP server example",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "dotenv": "^16.4.5",
+    "mysql2": "^3.19.1",
+    "zod": "^3.23.8"
+  }
+}
